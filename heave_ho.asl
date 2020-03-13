@@ -2,12 +2,13 @@ state("HeaveHo") {}
 
 startup
 {
+    //print("[ASL] Loaded vars: " + String.Join(", ", (vars as IDictionary<string,object>).Keys));
     vars.PAGE_EXECUTE_ANY = MemPageProtect.PAGE_EXECUTE | MemPageProtect.PAGE_EXECUTE_READ | MemPageProtect.PAGE_EXECUTE_READWRITE | MemPageProtect.PAGE_EXECUTE_WRITECOPY;
     vars.JustStarted = false;
     vars.offset = 0.0;
     vars.GMAwakeSigTarget = new SigScanTarget(0,
-        "55", //push rbp
-        "48 8B EC", //mov rbp,rsp
+        "55",
+        "48 8B EC",
         "48 81 EC ?? ?? ?? ??",
         "48 89 75 ??",
         "48 8B F1",
@@ -17,16 +18,19 @@ startup
         "48 8D 64 24 ??",
         "49 BB ?? ?? ?? ?? ?? ?? ?? ??"
     );
-    vars.OnStart = (EventHandler)(
-        (object sender, EventArgs e) => {
-            vars.TotalRunTime = 0.0;
-            vars.JustStarted = true;
-            vars.offset = 0.0;
-        }
-    );
+    
     //TODO: add the full Awake method signature
     vars.CurrentRunTime = 0.0f;
     vars.TotalRunTime = 0.0f;
+    //this doesn't work.
+    //current.LevelTimesLength = 0;
+    EventHandler onStart = 
+    (object sender, EventArgs e) => {
+        vars.TotalRunTime = 0.0;
+        vars.JustStarted = true;
+        vars.offset = 0.0;
+    };
+    vars.OnStart = onStart;
     timer.OnStart += vars.OnStart;
 }
 
@@ -65,11 +69,11 @@ init
     }
     
     print("[ASL] GameManager::Awake found at: 0x" + address.ToString("X16"));
-    //GMAwakeSigScanner.Finalize();
     
     IntPtr mGameManager = new IntPtr(memory.ReadValue<long>(address + 0x14));
-    vars.GameManager = memory.ReadPointer(mGameManager);
-    print("[ASL] GameManager::Instance found at: 0x" + vars.GameManager.ToString("X16"));
+    IntPtr GameManager = memory.ReadPointer(mGameManager);
+    print("[ASL] GameManager::Instance found at: 0x" + GameManager.ToString("X16"));
+    vars.LevelTimesPtr = new DeepPointer(GameManager+0xB8, 0x10, 0x10);
 }
 
 update
@@ -97,24 +101,23 @@ update
     //IntPtr victoryTrigger = memory.ReadPointer(levelManager+0x30);
     //current.IsVictory = memory.ReadValue<bool>(victoryTrigger+0x88);
     //print(player.ToString());
-    IntPtr metricsManager = memory.ReadPointer(((IntPtr)vars.GameManager)+0xB8);
-    IntPtr currentWorldMetrics = memory.ReadPointer(metricsManager+0x10);
-    IntPtr levelTimesArray = memory.ReadPointer(currentWorldMetrics+0x10);
-    current.levelTimesLength = memory.ReadValue<int>(levelTimesArray+0x18);
-    vars.levelTimes = memory.ReadPointer(levelTimesArray+0x10);
+    IntPtr levelTimes = new IntPtr(vars.LevelTimesPtr.Deref<long>(game));
+    //print(levelTimes.ToString("X16"));
+    current.LevelTimesLength = memory.ReadValue<int>(levelTimes+0x18);
+    vars.LevelTimes = memory.ReadPointer(levelTimes+0x10);
 }
 
 gameTime
 {
-    if (current.levelTimesLength < old.levelTimesLength)
+    if (current.LevelTimesLength < old.LevelTimesLength)
     {
         vars.TotalRunTime += vars.CurrentRunTime;
     }
     
     float runTime = 0.0f;
-    for (int i = 0; i < current.levelTimesLength; i++)
+    for (int i = 0; i < current.LevelTimesLength; i++)
     {
-        runTime += memory.ReadValue<float>( ((IntPtr)vars.levelTimes) + 0x20 + (4 * i));
+        runTime += memory.ReadValue<float>( ((IntPtr)vars.LevelTimes) + 0x20 + (4 * i));
     }
     vars.CurrentRunTime = runTime;
     if (vars.JustStarted)
@@ -128,11 +131,6 @@ gameTime
     //}
 }
 
-exit
-{
-    current.levelTimesLength = 0;
-}
-
 start
 {
     //return current.LevelName == "Tuto1" && old.LevelName != "Tuto1";
@@ -140,7 +138,7 @@ start
 
 split
 {
-    return current.levelTimesLength > old.levelTimesLength;
+    return current.LevelTimesLength > old.LevelTimesLength;
 }
 
 isLoading
