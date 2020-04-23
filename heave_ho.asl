@@ -70,10 +70,9 @@ init
     
     print("[ASL] GameManager::Awake found at: 0x" + address.ToString("X16"));
     
-    IntPtr mGameManager = new IntPtr(memory.ReadValue<long>(address + 0x14));
-    IntPtr GameManager = memory.ReadPointer(mGameManager);
+    IntPtr GameManager = memory.ReadPointer(address + 0x14);
     print("[ASL] GameManager::Instance found at: 0x" + GameManager.ToString("X16"));
-    vars.LevelTimesPtr = new DeepPointer(GameManager+0xB8, 0x10, 0x10);
+    vars.LevelTimesPtr = new DeepPointer(GameManager, 0xB8, 0x10, 0x10);
 }
 
 update
@@ -101,7 +100,9 @@ update
     //IntPtr victoryTrigger = memory.ReadPointer(levelManager+0x30);
     //current.IsVictory = memory.ReadValue<bool>(victoryTrigger+0x88);
     //print(player.ToString());
-    IntPtr levelTimes = new IntPtr(vars.LevelTimesPtr.Deref<long>(game));
+    IntPtr levelTimes;
+    vars.LevelTimesPtr.DerefOffsets(game, out levelTimes);
+    levelTimes = memory.ReadPointer(levelTimes);
     //print(levelTimes.ToString("X16"));
     current.LevelTimesLength = memory.ReadValue<int>(levelTimes+0x18);
     vars.LevelTimes = memory.ReadPointer(levelTimes+0x10);
