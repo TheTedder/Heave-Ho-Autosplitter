@@ -36,8 +36,16 @@ init
     foreach (byte b in hashed) s += b;
     if (s == "2336514740711751125296795513677151228992114533192051056830181341724411522967") version = "1.0";
     else if (s == "2308696111144216968593416917814132145111418649485985105170732501369717521317792") version = "1.1";
+    else version = "NA";
     print("[ASL] Hash: " + s);
     print("[ASL] Version: " + version);
+    
+    // Error out if unknown version
+    if (version == "NA") {
+        print("[ASL] Unknown game hash / version");
+        print("[ASL] " + s);
+        return;
+    }
 
     // Version specific setup
     var GMAwakeSigTarget = new SigScanTarget();
