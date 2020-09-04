@@ -29,23 +29,18 @@ init
 {
     // Version checking using hash
     vars.gamePath = modules.First().FileName + "\\..\\HeaveHo_Data\\Managed\\Assembly-CSharp.dll";
+    print("[ASL] Reading bytes");
     byte[] dllBytes = File.ReadAllBytes(vars.gamePath);
+    print("[ASL] Hashing bytes");
     System.Security.Cryptography.SHA256 hasher = System.Security.Cryptography.SHA256.Create();
     byte[] hashed = hasher.ComputeHash(dllBytes);
     string s = "";
     foreach (byte b in hashed) s += b;
     if (s == "2336514740711751125296795513677151228992114533192051056830181341724411522967") version = "1.0";
-    else if (s == "2308696111144216968593416917814132145111418649485985105170732501369717521317792") version = "1.1";
+    else if (s == "36112821086181635956130462322119323419631435315621402321061141758778815141202") version = "1.1";
     else version = "NA";
     print("[ASL] Hash: " + s);
     print("[ASL] Version: " + version);
-    
-    // Error out if unknown version
-    if (version == "NA") {
-        print("[ASL] Unknown game hash / version");
-        print("[ASL] " + s);
-        return;
-    }
 
     // Version specific setup
     var GMAwakeSigTarget = new SigScanTarget();
@@ -64,7 +59,7 @@ init
         "49 BB ?? ?? ?? ?? ?? ?? ?? ??"
       );
       gmOffset = 0x14;
-    } else if (version == "1.1") {
+    } else if (version == "1.1" || version == "NA") {
       GMAwakeSigTarget = new SigScanTarget(0,
         "55",
         "48 8B EC",
@@ -84,22 +79,30 @@ init
     var pages = game.MemoryPages();
     SignatureScanner scanner = new SignatureScanner(game, modules.First().BaseAddress, modules.First().ModuleMemorySize);
     IntPtr address = IntPtr.Zero;
-    while (address == IntPtr.Zero)
+    bool found = false;
+    uint count = 0;
+    foreach (MemoryBasicInformation page in pages)
     {
-        uint count = 0;
-        foreach (MemoryBasicInformation page in pages)
+        if ((uint)(page.Protect & vars.PAGE_EXECUTE_ANY) > 0)
         {
-            if ((uint)(page.Protect & vars.PAGE_EXECUTE_ANY) > 0)
-            {
-                print("[ASL] scanning page " + count.ToString());
-                scanner.Address = page.BaseAddress;
-                scanner.Size = (int)page.RegionSize.ToUInt32();
-                address = scanner.Scan(GMAwakeSigTarget, 16);
-                if (address != IntPtr.Zero) break;
+            print("[ASL] scanning page " + count.ToString());
+            scanner.Address = page.BaseAddress;
+            scanner.Size = (int)page.RegionSize.ToUInt32();
+            address = scanner.Scan(GMAwakeSigTarget, 16);
+            if (address != IntPtr.Zero) {
+              found = true;
+              break;
             }
-            count++;
         }
+        count++;
     }
+
+    if (!found)
+    {
+      print("[ASL] Could not find GameManager::Awake");
+      return;
+    }
+
     print("[ASL] GameManager::Awake found at: 0x" + address.ToString("X16"));
 
     // Get game manager instance
