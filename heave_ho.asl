@@ -2,178 +2,155 @@ state("HeaveHo") {}
 
 startup
 {
-    vars.PAGE_EXECUTE_ANY = MemPageProtect.PAGE_EXECUTE | MemPageProtect.PAGE_EXECUTE_READ | MemPageProtect.PAGE_EXECUTE_READWRITE | MemPageProtect.PAGE_EXECUTE_WRITECOPY;
+	vars.Log = (Action<object>)((output) => print("[Heave Ho ASL] " + output));
 
-    vars.JustStarted = false;
-    vars.offset = 0.0;
-    vars.TotalRunTime = 0.0f;
-    vars.CurrentRunTime = 0.0f;
+	vars.JustStarted = false;
+	vars.Offset = 0f;
+	vars.TotalRunTime = 0f;
+	vars.CurrentRunTime = 0f;
 
-    vars.OnStart = (EventHandler) (
-        (object sender, EventArgs e) => {
-            vars.JustStarted = true;
-            vars.offset = 0.0;
-            vars.TotalRunTime = 0.0;
-        }
-    );
+	vars.OnStart = (EventHandler)((s, e) =>
+	{
+		vars.JustStarted = true;
+		vars.Offset = 0f;
+		vars.TotalRunTime = 0f;
+	});
 
-    timer.OnStart += vars.OnStart;
-}
-
-shutdown
-{
-    timer.OnStart -= vars.OnStart;
-}
+	timer.OnStart += vars.OnStart;
+} // startup
 
 init
 {
-    // Version checking using hash
-    vars.gamePath = modules.First().FileName + "\\..\\HeaveHo_Data\\Managed\\Assembly-CSharp.dll";
-    print("[ASL] Reading bytes");
-    byte[] dllBytes = File.ReadAllBytes(vars.gamePath);
-    print("[ASL] Hashing bytes");
-    System.Security.Cryptography.SHA256 hasher = System.Security.Cryptography.SHA256.Create();
-    byte[] hashed = hasher.ComputeHash(dllBytes);
-    string s = "";
-    foreach (byte b in hashed) s += b;
-    if (s == "2336514740711751125296795513677151228992114533192051056830181341724411522967") version = "1.0";
-    else if (s == "36112821086181635956130462322119323419631435315621402321061141758778815141202") version = "1.1";
-    else version = "NA";
-    print("[ASL] Hash: " + s);
-    print("[ASL] Version: " + version);
+	var classes = new Dictionary<string, uint>
+	{
+		{ "GameManager", 0x200001D }
+	};
 
-    // Version specific setup
-    var GMAwakeSigTarget = new SigScanTarget();
-    int gmOffset = 0x00;
-    if (version == "1.0") {
-      GMAwakeSigTarget = new SigScanTarget(0,
-        "55",
-        "48 8B EC",
-        "48 81 EC ?? ?? ?? ??",
-        "48 89 75 ??",
-        "48 8B F1",
-        "48 B8 ?? ?? ?? ?? ?? ?? ?? ??",
-        "48 8B 08",
-        "33 D2",
-        "48 8D 64 24 ??",
-        "49 BB ?? ?? ?? ?? ?? ?? ?? ??"
-      );
-      gmOffset = 0x14;
-    } else if (version == "1.1" || version == "NA") {
-      GMAwakeSigTarget = new SigScanTarget(0,
-        "55",
-        "48 8B EC",
-        "48 81 EC ?? ?? ?? ??",
-        "48 89 75 F8",
-        "48 8B F1",
-        "48 C7 45 C8 ?? ?? ?? ??",
-        "48 C7 45 D0 ?? ?? ?? ??",
-        "48 C7 45 D8 ?? ?? ?? ??",
-        "48 B8 ?? ?? ?? ?? ?? ?? ?? ??",
-        "48 8B 08"
-      );
-      gmOffset = 0x2c;
-    }
+	vars.CancelSource = new CancellationTokenSource();
+	vars.MonoThread = new Thread(() =>
+	{
+		vars.Log("Starting thread.");
 
-    // Crashes if incorrect signature provided
-    var pages = game.MemoryPages();
-    SignatureScanner scanner = new SignatureScanner(game, modules.First().BaseAddress, modules.First().ModuleMemorySize);
-    IntPtr address = IntPtr.Zero;
-    bool found = false;
-    uint count = 0;
-    foreach (MemoryBasicInformation page in pages)
-    {
-        if ((uint)(page.Protect & vars.PAGE_EXECUTE_ANY) > 0)
-        {
-            print("[ASL] scanning page " + count.ToString());
-            scanner.Address = page.BaseAddress;
-            scanner.Size = (int)page.RegionSize.ToUInt32();
-            address = scanner.Scan(GMAwakeSigTarget, 16);
-            if (address != IntPtr.Zero) {
-              found = true;
-              break;
-            }
-        }
-        count++;
-    }
+		var class_count = 0;
+		var class_cache = IntPtr.Zero;
 
-    if (!found)
-    {
-      print("[ASL] Could not find GameManager::Awake");
-      return;
-    }
+		var cancelToken = vars.CancelSource.Token;
+		while (!cancelToken.IsCancellationRequested)
+		{
+			if (game.ModulesWow64Safe().FirstOrDefault(m => m.ModuleName == "mono-2.0-bdwgc.dll") != null)
+				break;
 
-    print("[ASL] GameManager::Awake found at: 0x" + address.ToString("X16"));
+			vars.Log("Mono module not loaded.");
+			Thread.Sleep(1000);
+		}
 
-    // Get game manager instance
-    IntPtr mGameManager = new IntPtr(memory.ReadValue<long>(address + gmOffset));
-    vars.GameManager = memory.ReadPointer(mGameManager);
-    print("[ASL] GameManager::Instance found at: 0x" + vars.GameManager.ToString("X16"));
-}
+		while (!cancelToken.IsCancellationRequested)
+		{
+			var table_size = new DeepPointer("mono-2.0-bdwgc.dll", 0x494118, 0x18).Deref<int>(game);
+			var slot = new DeepPointer("mono-2.0-bdwgc.dll", 0x494118, 0x10, 0x8 * (int)(4197980909 % table_size)).Deref<IntPtr>(game);
+			for (; slot != IntPtr.Zero; slot = game.ReadPointer(slot + 0x10))
+			{
+				string slot_key = new DeepPointer(slot + 0x0, 0x0).DerefString(game, 32);
+				if (slot_key != "Assembly-CSharp") continue;
+
+				class_count = new DeepPointer(slot + 0x8, 0x4D8).Deref<int>(game);
+				class_cache = new DeepPointer(slot + 0x8, 0x4E0).Deref<IntPtr>(game);
+			}
+
+			if (class_count > 0 && class_cache != IntPtr.Zero)
+				break;
+
+			vars.Log("Assembly-CSharp not found.");
+			Thread.Sleep(1000);
+		}
+
+		while (!cancelToken.IsCancellationRequested)
+		{
+			var mono = new Dictionary<string, IntPtr>();
+			var allFound = false;
+
+			foreach (var token in classes)
+			{
+				var klass = game.ReadPointer(class_cache + 0x8 * (int)(token.Value % class_count));
+				for (; klass != IntPtr.Zero; klass = game.ReadPointer(klass + 0x108))
+				{
+					if (game.ReadValue<uint>(klass + 0x58) != token.Value) continue;
+
+					var vtable_size = game.ReadValue<int>(klass + 0x5C);
+					mono.Add(token.Key, new DeepPointer(klass + 0xD0, 0x8, 0x40 + 0x8 * vtable_size).Deref<IntPtr>(game));
+
+					vars.Log("Found " + token.Key + " at 0x" + mono[token.Key].ToString("X") + ".");
+				}
+			}
+
+			if (mono.Count == classes.Count && mono.Values.All(ptr => ptr != IntPtr.Zero))
+			{
+				vars.Data = new MemoryWatcherList
+				{
+					new MemoryWatcher<IntPtr>(new DeepPointer(mono["GameManager"] + 0x0, 0xB8, 0x10, 0x10)) { Name = "LevelTimesPtr" }
+				};
+
+				vars.Log("Everything found successfully.");
+				break;
+			}
+
+			vars.Log("Not all classes found.");
+			Thread.Sleep(5000);
+		}
+
+		vars.Log("Exiting thread.");
+	});
+
+	current.LevelTimesCount = 0;
+
+	vars.MonoThread.Start();
+} // init
 
 update
 {
-    //GameManager.levelSelectorInstance: [0x78]
-    //IntPtr levelSelectorInstance = memory.ReadPointer((IntPtr)vars.GameManager+0x78);
-    //print("[ASL] found LevelSelector at " + levelSelectorInstance.ToString("X16"));
-    //LevelSelector.currentLevelIndex: 0x58
-    //current.LevelIndex = memory.ReadValue<int>(levelSelectorInstance+0x98);
-    //print(String.Format("[ASL] level {0} loaded", current.LevelIndex));
-    //IntPtr LevelProperties = memory.ReadPointer(levelSelectorInstance+0x58);
-    //IntPtr LevelName = memory.ReadPointer(LevelProperties+0x10);
-    //int LevelNameLength = memory.ReadValue<int>(LevelName+0x10);
-    //print(String.Format("[ASL] level name is {0} chars long.", LevelNameLength));
-    //current.LevelName = memory.ReadString(LevelName+0x14, LevelNameLength * 2);
-    //print(String.Format("[ASL] current level: {0}", current.LevelName));
+	if (vars.MonoThread.IsAlive) return false;
 
-    //IntPtr scoreManager = memory.ReadPointer((IntPtr)vars.GameManager+0xA8);
-    //IntPtr players = memory.ReadPointer(((IntPtr)vars.GameManager)+0xf0);
-    //IntPtr _items = memory.ReadPointer(players+0x10);
-    //IntPtr player = memory.ReadPointer(_items+0x20); //don't ask me why this works.
-    //IntPtr currentCharacter = memory.ReadPointer(player+0x170);
-    //IntPtr levelManager = memory.ReadPointer(currentCharacter+0x100);
-    //IntPtr levelRules = memory.ReadPointer(levelManager+0x20);
-    //IntPtr victoryTrigger = memory.ReadPointer(levelManager+0x30);
-    //current.IsVictory = memory.ReadValue<bool>(victoryTrigger+0x88);
-    //print(player.ToString());
-
-    // Get necessary variables with offsets from game manager
-    IntPtr metricsManager = memory.ReadPointer(((IntPtr)vars.GameManager)+0xB8);
-    IntPtr currentWorldMetrics = memory.ReadPointer(metricsManager+0x10);
-    IntPtr levelTimesArray = memory.ReadPointer(currentWorldMetrics+0x10);
-    current.levelTimesLength = memory.ReadValue<int>(levelTimesArray+0x18);
-    vars.levelTimes = memory.ReadPointer(levelTimesArray+0x10);
-}
-
-gameTime
-{
-    if (current.levelTimesLength < old.levelTimesLength)
-      vars.TotalRunTime += vars.CurrentRunTime;
-
-    vars.CurrentRunTime = 0.0f;
-    for (int i = 0; i < current.levelTimesLength; i++)
-      vars.CurrentRunTime += memory.ReadValue<float>( ((IntPtr)vars.levelTimes) + 0x20 + (4 * i));
-
-    if (vars.JustStarted)
-    {
-        vars.JustStarted = false;
-        vars.offset = vars.CurrentRunTime;
-    }
-
-    return TimeSpan.FromSeconds((double)(vars.TotalRunTime + vars.CurrentRunTime) - vars.offset);
-}
-
-exit
-{
-    current.levelTimesLength = 0;
+	vars.Data.UpdateAll(game);
+	current.LevelTimesCount = game.ReadValue<int>((IntPtr)vars.Data["LevelTimesPtr"].Current + 0x18);
+	vars.TimesList = game.ReadPointer((IntPtr)vars.Data["LevelTimesPtr"].Current + 0x10);
 }
 
 split
 {
-    return current.levelTimesLength > old.levelTimesLength;
+	return old.LevelTimesCount < current.LevelTimesCount;
+}
+
+gameTime
+{
+	if (old.LevelTimesCount > current.LevelTimesCount)
+		vars.TotalRunTime += vars.CurrentRunTime;
+
+	vars.CurrentRunTime = 0f;
+	for (int i = 0; i < current.LevelTimesCount; ++i)
+		vars.CurrentRunTime += game.ReadValue<float>((IntPtr)vars.TimesList + 0x20 + 0x4 * i);
+
+	if (vars.JustStarted)
+	{
+		vars.JustStarted = false;
+		vars.Offset = vars.CurrentRunTime;
+	}
+
+	return TimeSpan.FromSeconds(vars.TotalRunTime + vars.CurrentRunTime - vars.Offset);
 }
 
 isLoading
 {
-    return true;
+	return true;
+}
+
+exit
+{
+	current.LevelTimesCount = 0;
+	vars.CancelSource.Cancel();
+}
+
+shutdown
+{
+	timer.OnStart -= vars.OnStart;
+	vars.CancelSource.Cancel();
 }
